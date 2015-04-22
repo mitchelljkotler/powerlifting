@@ -1,10 +1,12 @@
 
 import os
+from datetime import date
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from models import Base, Exercise, Set, Workout
-from controllers import CLI
+from exercises import exercises
+from models import Base, Exercise, Set, Workout, User
+from controllers.tsr_import import Import
 
 db_file = 'pl.db'
 
@@ -15,47 +17,29 @@ session = Session()
 if not os.path.exists(db_file):
     Base.metadata.create_all(engine)
 
-    session.add_all([
-        Exercise(name='Squat', type='squat'),
-        Exercise(name='Bench Press', type='press'),
-        Exercise(name='Deadlift', type='hinge'),
-        Exercise(name='Snatch', type='hinge'),
-        Exercise(name='Clean & Jerk', type='hinge'),
-        Exercise(name='Front Squat', type='squat'),
-        Exercise(name='Overhead Squat', type='squat'),
-        Exercise(name='Split Squat', type='squat'),
-        Exercise(name='Lunge', type='squat'),
-        Exercise(name='Bulgarian Split Squat', type='squat'),
-        Exercise(name='Overhead Press', type='press'),
-        Exercise(name='Push Press', type='press'),
-        Exercise(name='Jerk', type='press'),
-        Exercise(name='Slingshot Bench Press', type='press'),
-        Exercise(name='Close Grip Bench Press', type='press'),
-        Exercise(name='Incline Bench Press', type='press'),
-        Exercise(name='Dumbbell Bench Press', type='press'),
-        Exercise(name='Dumbbell Incline Bench Press', type='press'),
-        Exercise(name='Floor Press', type='press'),
-        Exercise(name='Dip', type='press'),
-        Exercise(name='Romanian Deadlift', type='hinge'),
-        Exercise(name='Good Morning', type='hinge'),
-        Exercise(name='Power Clean', type='hinge'),
-        Exercise(name='Power Snatch', type='hinge'),
-        Exercise(name='Clean', type='hinge'),
-        Exercise(name='Pendlay Row', type='pull'),
-        Exercise(name='Dumbbell Row', type='pull'),
-        Exercise(name='Chin Up', type='pull'),
-        Exercise(name='Pull Up', type='pull'),
-        Exercise(name='Curl', type='other'),
-        Exercise(name='Lying Triceps Extension', type='other'),
-        Exercise(name='Lateral Raise', type='other'),
-        Exercise(name='Front Raise', type='other'),
-        Exercise(name='Face Pull', type='other'),
-        Exercise(name='Flye', type='other'),
-        Exercise(name='Back Extension', type='other'),
-        Exercise(name='Sit Up', type='other'),
-        Exercise(name='Ab Wheel', type='other'),
-    ])
+    user = User(name='mitch')
+    session.add(user)
+    session.add_all(exercises)
     session.commit()
+else:
+    user = session.query(User).filter(User.name=='mitch').scalar()
+
+squat = session.query(Exercise).filter_by(name='Squat').one()
+bench = session.query(Exercise).filter_by(name='Bench Press').one()
+dead  = session.query(Exercise).filter_by(name='Deadlift').one()
 
 if __name__ == '__main__':
-    CLI(session).cmdloop()
+    # XXX only import new data
+    importer = Import(session, user)
+    importer.parse_all('/home/mitch/scratch/tsr/data/')
+
+    # meets and weights
+    convert_meet(session, date(2013, 10, 12))
+    convert_meet(session, date(2014,  3, 29))
+    convert_meet(session, date(2014, 10, 11))
+    session.add_all([
+        Weight(user=mitch, date=date(2013, 10, 12), weight=194),
+        Weight(user=mitch, date=date(2014,  3, 29), weight=194),
+        Weight(user=mitch, date=date(2014, 10, 11), weight=194),
+        ])
+    session.commit()
