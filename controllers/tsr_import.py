@@ -91,8 +91,20 @@ class Import(object):
 
         self.session.commit()
 
+    def _get_last_workout_date(self):
+        """get last workout date"""
+
+        last = self.session.query(Workout).order_by(Workout.date.desc()).first()
+        return last.date
+
+
     def parse_all(self, dir_path):
         """parse all files in a dir"""
 
-        for file_ in sorted(os.listdir(dir_path)):
+        last_date = self._get_last_workout_date()
+        last_date_str = last_date.strftime('%Y-%m-%d')
+        files = [f for f in sorted(os.listdir(dir_path))
+                if os.path.basename(f) > last_date_str]
+
+        for file_ in files:
             self.parse_file(os.path.join(dir_path, file_))

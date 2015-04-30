@@ -5,8 +5,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from exercises import exercises
-from models import Base, Exercise, Set, Workout, User
+from models import Base, Exercise, Set, Workout, User, Weight
 from controllers.tsr_import import Import
+from controllers.py import convert_meet
 
 db_file = 'pl.db'
 
@@ -29,17 +30,17 @@ bench = session.query(Exercise).filter_by(name='Bench Press').one()
 dead  = session.query(Exercise).filter_by(name='Deadlift').one()
 
 if __name__ == '__main__':
-    # XXX only import new data
     importer = Import(session, user)
-    importer.parse_all('/home/mitch/scratch/tsr/data/')
+    importer.parse_all('./tsr/data/')
 
     # meets and weights
-    convert_meet(session, date(2013, 10, 12))
-    convert_meet(session, date(2014,  3, 29))
-    convert_meet(session, date(2014, 10, 11))
-    session.add_all([
-        Weight(user=mitch, date=date(2013, 10, 12), weight=194),
-        Weight(user=mitch, date=date(2014,  3, 29), weight=194),
-        Weight(user=mitch, date=date(2014, 10, 11), weight=194),
-        ])
+    meet_dates_weights = [
+            (date(2013, 10, 12,), 194),
+            (date(2014,  3, 29,), 194),
+            (date(2014, 10, 11,), 194),
+            (date(2015,  4, 26,), 195),
+            ]
+    for date_, weight in meet_dates_weights:
+        convert_meet(session, date_)
+        session.add(Weight(user=user, date=date_, weight=weight))
     session.commit()

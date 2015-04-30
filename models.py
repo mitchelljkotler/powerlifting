@@ -1,12 +1,14 @@
 
 from sqlalchemy import Column, Integer, String, Date, DateTime, ForeignKey, \
-        Boolean, Numeric, Enum, UniqueConstraint, CheckConstraint
+        Boolean, Numeric, Enum, SmallInteger, \
+        UniqueConstraint, CheckConstraint
 from sqlalchemy import inspect
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy.sql import func
 
 from datetime import datetime
+from decimal import Decimal
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -74,7 +76,8 @@ class User(Base, PLMixin):
                 join(Workout).filter(Workout.date==d[0]).
                 filter(Set.reps>0).one()
                 for d in dates]
-        plt.plot(dates, data, '-o', label='%s: %s' % (exercise.name, data_type))
+        plt.plot(dates, data, '-o', label=exercise.name)
+        plt.title(data_type.capitalize())
 
     def get_weight(self, date, unit='lbs'):
         """Get user's weight on a given date in the given units"""
@@ -82,7 +85,6 @@ class User(Base, PLMixin):
         weight = session.query(Weight).filter(Weight.user==self).\
                                        filter(Weight.date<=date).\
                                        first()
-        print self.name, date
         return weight.convert(unit)
 
 
@@ -121,9 +123,9 @@ class Weight(Base, PLMixin):
         if unit == self.weight_unit:
             return self.weight
         if unit == 'lbs':
-            return self.weight * 2.2046
+            return self.weight * Decimal('2.2046')
         if unit == 'kgs':
-            return self.weight * 0.4536
+            return self.weight * Decimal('0.4536')
         raise ValueError
 
 ''
@@ -210,6 +212,16 @@ class Attempt(Base, PLMixin):
     def __unicode__(self):
         return '%s: %s - %s' % (self.exercise, self.weight, 'Make' if self.make else 'Miss')
 
+    def convert(self, unit='lbs'):
+        """Convert units"""
+        if unit == self.weight_unit:
+            return self.weight
+        if unit == 'lbs':
+            return self.weight * Decimal('2.2046')
+        if unit == 'kgs':
+            return self.weight * Decimal('0.4536')
+        raise ValueError
+
 
 class Meet(Base, PLMixin):
     name = Column(String(255), nullable=False)
@@ -224,6 +236,20 @@ class Meet(Base, PLMixin):
     def __unicode__(self):
         return '%s on %s' % (self.name, self.date)
 
+    def total(self):
+        """Total"""
+        session = inspect(self).session
+
+        best_attempt = lambda lift:\
+                session.query(Attempt).join(Exercise).join(Meet)\
+                .filter(Attempt.meet==self)\
+                .filter(Exercise.name==lift)\
+                .filter(Attempt.make==True)\
+                .order_by(Attempt.weight.desc())\
+                .first().convert('kgs')
+        return float(sum(best_attempt(lift) for lift in
+                    ['Squat', 'Bench Press', 'Deadlift']))
+
     def wilks(self):
         """Calculate wilks score"""
         mcoeffs = (-216.0475144, 16.2606339, -0.002388645,
@@ -232,19 +258,8 @@ class Meet(Base, PLMixin):
                    -0.00930733913, 0.00004731582, -0.00000009054)
         coeffs = mcoeffs if self.user.gender == 'male' else fcoeffs
 
-        session = inspect(self).session
-
-        best_attempt = lambda lift:\
-                session.query(Attempt).join(Exercise)\
-                .filter(Exercise.name==lift)\
-                .filter(Attempt.make==True)\
-                .order_by(Attempt.weight.desc())\
-                .first().weight
-        total = sum(best_attempt(lift) for lift in
-                    ['Squat', 'Bench Press', 'Deadlift'])
-
-        weight = self.user.get_weight(self.date, unit='kgs')
-        return ((total * 500) /
+        weight = float(self.user.get_weight(self.date, unit='kgs'))
+        return ((self.total() * 500) /
                 sum(coeffs[i] * weight ** i for i in xrange(6)))
 
     def prs(self):
@@ -260,3 +275,68 @@ class Meet(Base, PLMixin):
 ################################################################################
 # Program
 ################################################################################
+
+class ProgramWeight(Base, PLMixin):
+    """How to set the weight for a set"""
+
+    type = Column(Enum('add', 'percantage'), nullable=False)
+
+    # add
+    amount = Column(Integer, nullable=True)
+    which = Column(Enum('any', 'workout'), nullable=False, default='workout')
+    often = Column(Integer, nullable=True)
+
+    # percantage
+    percantage = Column(Integer, nullable=True)
+
+class ProgramSet(Base, PLMixin):
+    """A set in a program"""
+
+    order = Column(Integer, nullable=False)
+    exercise_id = Column(Integer, ForeignKey('exercise.id'), nullable=False)
+    exercise = relationship('Exercise')
+    reps = Column(Integer, nullable=False)
+    amrap = Column(Boolean, nullable=False)
+    workout_id = Column(Integer, ForeignKey('programworkout.id'), nullable=False)
+    type = Column(Enum('warmup', 'work', 'accessory'),
+        nullable=False, default='work')
+
+    weight_id = Column(Integer, ForeignKey('programweight.id'), nullable=False)
+    weight = relationship('ProgramWeight')
+
+    __mapper_args__ = {'order_by': order}
+    __table_args__ = (UniqueConstraint('order', 'workout_id'),)
+
+    def __repr__(self):
+        return 'Set: %s' % unicode(self)
+
+    def __unicode__(self):
+        return '%s: %sx%s' % (self.exercise, self.weight, self.reps)
+
+
+class ProgramWorkout(Base, PLMixin):
+    """A program workout"""
+
+    name = Column(String(255), nullable=False)
+    program_id = Column(Integer, ForeignKey('program.id'), nullable=False)
+    sets = relationship('ProgramSet', backref='workout')
+
+
+class Program(Base, PLMixin):
+    """A program"""
+
+    name = Column(String(255), nullable=False)
+    workouts = relationship('ProgramWorkout', backref='program')
+    days = Column(SmallInteger, nullable=False)
+
+    def get_days(self):
+        """Convert days from a small int to list"""
+        return [(self.days >> i) & 1 for i in xrange(7)]
+
+    def set_days(self, days):
+        self.days = sum((n << i) for i, n in enumerate(days))
+
+    def __unicode__(self):
+        return self.name
+
+
