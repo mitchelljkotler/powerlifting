@@ -1,12 +1,16 @@
 
-from sqlalchemy import Column, Integer, String, Date, DateTime, ForeignKey, \
-        Boolean, Numeric, Enum, SmallInteger, \
+from sqlalchemy import (
+        Column, Integer, String, Date, DateTime, ForeignKey,
+        Boolean, Numeric, Enum, Text,
         UniqueConstraint, CheckConstraint
+        )
 from sqlalchemy import inspect
 from sqlalchemy.orm import relationship
+from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy.sql import func
 
+from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
 import numpy as np
@@ -90,8 +94,35 @@ class User(Base, PLMixin):
 
 class Exercise(Base, PLMixin):
     name = Column(String(255), unique=True, nullable=False)
-    type = Column(Enum('squat', 'press', 'hinge', 'pull', 'other'),
+    type = Column(Enum(
+        'squat',
+        'press',
+        'hinge',
+        'pull',
+        'other',
+        ),
         nullable=False, default='other')
+    equipment = Column(Enum(
+        'barbell',
+        'bodyweight',
+        'buffalo bar',
+        'cable',
+        'cambered bar',
+        'dumbbell',
+        'ez bar',
+        'kettlebell',
+        'machine',
+        'safety squat bar',
+        'swiss bar',
+        'trap bar',
+        'other',
+        ),
+        nullable=False, default='barbell')
+    muscles = association_proxy('exercise_muscles', 'muscle')
+    dynamic = Column(Boolean, nullable=False, default=False)
+    plane = Column(Enum('horizontal', 'vertical'), nullable=True)
+    laterality = Column(Enum('bilateral', 'unilateral'), default='bilateral')
+    description = Column(Text, nullable=False, default='')
 
     def __repr__(self):
         return 'Exercise: %s' % self.name
@@ -100,7 +131,46 @@ class Exercise(Base, PLMixin):
         return self.name
 
 
-''
+class Muscle(Base, PLMixin):
+    name = Column(String(255), unique=True, nullable=False)
+    body_part = Column(Enum(
+        'shoulders',
+        'upper arms',
+        'forearms',
+        'chest',
+        'back',
+        'waist',
+        'hips',
+        'thighs',
+        'calves',
+        ),
+        nullable=False)
+
+    def __repr__(self):
+        return 'Muscle: %s' % self.name
+
+    def __unicode__(self):
+        return self.name
+
+
+class ExerciseMuscleAssociation(Base):
+    __tablename__ = 'exercise_muscle_association'
+    exercise_id = Column(Integer, ForeignKey('exercise.id'), primary_key=True)
+    muscle_id = Column(Integer, ForeignKey('muscle.id'), primary_key=True)
+    # XXX get more specific here, ie stablizer, etc
+    type = Column(Enum(
+        'primary',
+        'secondary',
+        ),
+        nullable=False)
+    muscle = relationship('Muscle')
+    exercise = relationship('Exercise', backref='exercise_muscles')
+
+    def __repr__(self):
+        return 'ExerciseMuscleAssociation: %s - %s, %s' % self.name
+
+
+
 ################################################################################
 # Weight Tracking
 ################################################################################
@@ -128,7 +198,6 @@ class Weight(Base, PLMixin):
             return self.weight * Decimal('0.4536')
         raise ValueError
 
-''
 ################################################################################
 # Workout Tracking
 ################################################################################
@@ -180,6 +249,7 @@ class Workout(Base, PLMixin):
     sets = relationship('Set', backref='workout', cascade='all, delete-orphan')
     user_id = Column(Integer, ForeignKey('user.id'), nullable=False)
     user = relationship('User', backref='workouts')
+    notes = Column(Text, nullable=False, default='')
 
     __mapper_args__ = {'order_by': 'workout."date" ASC'}
 
@@ -189,7 +259,6 @@ class Workout(Base, PLMixin):
     def __unicode__(self):
         return '%s on %s' % (self.name, self.date)
 
-''
 ################################################################################
 # Meet Tracking
 ################################################################################
@@ -229,6 +298,7 @@ class Meet(Base, PLMixin):
     attempts = relationship('Attempt', backref='meet')
     user_id = Column(Integer, ForeignKey('user.id'), nullable=False)
     user = relationship('User', backref='meets')
+    notes = Column(Text, nullable=False, default='')
 
     def __repr__(self):
         return 'Meet: %s' % unicode(self)
@@ -236,7 +306,7 @@ class Meet(Base, PLMixin):
     def __unicode__(self):
         return '%s on %s' % (self.name, self.date)
 
-    def total(self):
+    def total(self, unit='lbs'):
         """Total"""
         session = inspect(self).session
 
@@ -246,7 +316,7 @@ class Meet(Base, PLMixin):
                 .filter(Exercise.name==lift)\
                 .filter(Attempt.make==True)\
                 .order_by(Attempt.weight.desc())\
-                .first().convert('kgs')
+                .first().convert(unit)
         return float(sum(best_attempt(lift) for lift in
                     ['Squat', 'Bench Press', 'Deadlift']))
 
@@ -259,7 +329,7 @@ class Meet(Base, PLMixin):
         coeffs = mcoeffs if self.user.gender == 'male' else fcoeffs
 
         weight = float(self.user.get_weight(self.date, unit='kgs'))
-        return ((self.total() * 500) /
+        return ((self.total('kgs') * 500) /
                 sum(coeffs[i] * weight ** i for i in xrange(6)))
 
     def prs(self):
@@ -271,10 +341,10 @@ class Meet(Base, PLMixin):
             self.user.prs(exercise, self.date)
             print
 
-''
 ################################################################################
 # Program
 ################################################################################
+
 
 class ProgramWeight(Base, PLMixin):
     """How to set the weight for a set"""
@@ -289,6 +359,7 @@ class ProgramWeight(Base, PLMixin):
     # percantage
     percantage = Column(Integer, nullable=True)
 
+
 class ProgramSet(Base, PLMixin):
     """A set in a program"""
 
@@ -296,13 +367,14 @@ class ProgramSet(Base, PLMixin):
     exercise_id = Column(Integer, ForeignKey('exercise.id'), nullable=False)
     exercise = relationship('Exercise')
     reps = Column(Integer, nullable=False)
-    amrap = Column(Boolean, nullable=False)
+    amrap = Column(Boolean, nullable=False, default=False)
     workout_id = Column(Integer, ForeignKey('programworkout.id'), nullable=False)
     type = Column(Enum('warmup', 'work', 'accessory'),
         nullable=False, default='work')
 
-    weight_id = Column(Integer, ForeignKey('programweight.id'), nullable=False)
-    weight = relationship('ProgramWeight')
+    #weight_id = Column(Integer, ForeignKey('programweight.id'), nullable=False)
+    #weight = relationship('ProgramWeight')
+    weight_percent = Column(Numeric(4, 1))
 
     __mapper_args__ = {'order_by': order}
     __table_args__ = (UniqueConstraint('order', 'workout_id'),)
@@ -311,15 +383,21 @@ class ProgramSet(Base, PLMixin):
         return 'Set: %s' % unicode(self)
 
     def __unicode__(self):
-        return '%s: %sx%s' % (self.exercise, self.weight, self.reps)
+        return '%s: %s%%x%s' % (self.exercise, self.weight_percent, self.reps)
+
+    def inol(self):
+        """Calculate INOL for this exercise"""
+        return (self.reps / (100 - float(self.weight_percent)))
 
 
 class ProgramWorkout(Base, PLMixin):
     """A program workout"""
 
     name = Column(String(255), nullable=False)
+    day = Column(Integer, nullable=False)
     program_id = Column(Integer, ForeignKey('program.id'), nullable=False)
     sets = relationship('ProgramSet', backref='workout')
+    description = Column(Text, nullable=False, default='')
 
 
 class Program(Base, PLMixin):
@@ -327,16 +405,16 @@ class Program(Base, PLMixin):
 
     name = Column(String(255), nullable=False)
     workouts = relationship('ProgramWorkout', backref='program')
-    days = Column(SmallInteger, nullable=False)
-
-    def get_days(self):
-        """Convert days from a small int to list"""
-        return [(self.days >> i) & 1 for i in xrange(7)]
-
-    def set_days(self, days):
-        self.days = sum((n << i) for i, n in enumerate(days))
+    description = Column(Text, nullable=False, default='')
 
     def __unicode__(self):
         return self.name
 
+    def inol(self):
+        inol_totals = {}
+        for wo in self.workouts:
+            inol_totals[wo.name] = defaultdict(int)
+            for s in wo.sets:
+                inol_totals[wo.name][s.exercise] += s.inol()
+        return inol_totals
 

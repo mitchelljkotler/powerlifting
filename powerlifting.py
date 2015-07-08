@@ -5,6 +5,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from exercises import exercises
+from muscles import muscles
+from exercise_muscles import exercise_muscles
 from models import Base, Exercise, Set, Workout, User, Weight
 from controllers.tsr_import import Import
 from controllers.py import convert_meet
@@ -20,7 +22,9 @@ if not os.path.exists(db_file):
 
     user = User(name='mitch')
     session.add(user)
+    session.add_all(muscles)
     session.add_all(exercises)
+    exercise_muscles(session)
     session.commit()
 else:
     user = session.query(User).filter(User.name=='mitch').scalar()
